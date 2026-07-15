@@ -7,22 +7,11 @@ if (typeof CONFIG === 'undefined' || !CONFIG.HF_TOKEN) {
 
 let setStatus = (msg) => {};
 
-let hfInit = null;
-async function getHF() {
-  if (!hfInit) {
-    hfInit = import('https://cdn.jsdelivr.net/npm/@huggingface/inference@2/+esm')
-      .then(({ HfInference }) => new HfInference(CONFIG.HF_TOKEN))
-      .catch(err => {
-        hfInit = null;
-        throw new Error('Failed to load Hugging Face library: ' + err.message);
-      });
-  }
-  return hfInit;
-}
-
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
+
+const INPAINTING_MODEL = 'runwayml/stable-diffusion-v1-5-inpainting';
 
 async function hfRequest(model, imageBlob, { maskBlob, prompt } = {}) {
   const url = `${CONFIG.HF_API_BASE_URL}/${model}?api_key=${CONFIG.HF_TOKEN}`;
@@ -122,11 +111,68 @@ function expandCanvas(img, expandPx, direction) {
   return { canvas: c, maskCanvas };
 }
 
-const PROMPTS = {
-  upscale: 'Upscale this image 4x, enhance details, denoise, remove compression artifacts, photorealism, sharp edges, 8K quality, smooth natural textures, high resolution, crisp, no blur',
-  restore: 'Restore this damaged photo, fix faces, remove scratches and dust, clean image, natural skin texture, enhance eyes and mouth, smooth skin, realistic facial features, remove artifacts',
-  colorize: 'Colorize this black and white photo naturally, accurate realistic colors, natural skin tones, vibrant yet realistic, preserve original details and lighting, smooth color transitions',
-};
+function createWhiteMask(w, h) {
+  const c = document.createElement('canvas');
+  c.width = w;
+  c.height = h;
+  const ctx = c.getContext('2d');
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, w, h);
+  return c;
+}
+
+function applyUnsharpMask(canvas, amount, radius, threshold) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  const w = canvas.width;
+  const h = canvas.height;
+
+  const copy = new Uint8ClampedArray(data);
+
+  const kSize = Math.max(3, Math.round(radius) * 2 + 1);
+  const half = Math.floor(kSize / 2);
+  const kernel = new Float32Array(kSize * kSize);
+  let sum = 0;
+  const sigma = radius / 2;
+  for (let y = -half; y <= half; y++) {
+    for (let x = -half; x <= half; x++) {
+      const v = Math.exp(-(x * x + y * y) / (2 * sigma * sigma));
+      kernel[(y + half) * kSize + (x + half)] = v;
+      sum += v;
+    }
+  }
+  for (let i = 0; i < kernel.length; i++) kernel[i] /= sum;
+
+  function gauss(idx) {
+    let r = 0, g = 0, b = 0;
+    for (let ky = 0; ky < kSize; ky++) {
+      for (let kx = 0; kx < kSize; kx++) {
+        const px = ((idx / 4 | 0) % w) + kx - half;
+        const py = ((idx / 4 | 0) / w | 0) + ky - half;
+        if (px < 0 || px >= w || py < 0 || py >= h) continue;
+        const pik = (py * w + px) * 4;
+        const kVal = kernel[ky * kSize + kx];
+        r += copy[pik] * kVal;
+        g += copy[pik + 1] * kVal;
+        b += copy[pik + 2] * kVal;
+      }
+    }
+    return [r, g, b];
+  }
+
+  for (let i = 0; i < data.length; i += 4) {
+    const [gr, gg, gb] = gauss(i);
+    const dr = data[i] - gr;
+    const dg = data[i + 1] - gg;
+    const db = data[i + 2] - gb;
+    if (Math.abs(dr) < threshold && Math.abs(dg) < threshold && Math.abs(db) < threshold) continue;
+    data[i] = Math.max(0, Math.min(255, data[i] + dr * amount));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + dg * amount));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + db * amount));
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
 
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.querySelectorAll('#enhance-tabs .tool-tab');
@@ -206,34 +252,44 @@ document.addEventListener('DOMContentLoaded', () => {
         const imageBlob = await new Promise(r => canvas.toBlob(r));
         const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
         setStatus('Sending to Stable Diffusion inpainting…');
-        const result = await hfRequest(CONFIG.HF_MODELS.outpainting, imageBlob, { maskBlob, prompt });
+        const result = await hfRequest(INPAINTING_MODEL, imageBlob, { maskBlob, prompt });
         resultBlob = result;
         const url = URL.createObjectURL(result);
         afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
         setStatus('Done');
-      } else {
-        setStatus('Loading AI library…');
-        const hf = await getHF();
-
-        let imageBlob;
-        if (currentTab === 'upscale') {
-          const scaleFactor = parseInt(document.getElementById('upscale-factor').value, 10) || 4;
-          setStatus(`Upscaling ${scaleFactor}x and enhancing…`);
-          imageBlob = await imageToBlobScaled(img, scaleFactor);
-        } else {
-          imageBlob = await imageToBlob(img);
-        }
-
-        const prompt = PROMPTS[currentTab];
-        setStatus(`Sending to FLUX AI (${currentTab})…`);
-
-        const result = await hf.imageToImage({
-          model: 'black-forest-labs/FLUX.1-Kontext-dev',
-          inputs: imageBlob,
-          parameters: { prompt },
-          waitForModel: true,
-        });
-
+      } else if (currentTab === 'upscale') {
+        const scaleFactor = parseInt(document.getElementById('upscale-factor').value, 10) || 4;
+        setStatus(`Upscaling ${scaleFactor}x…`);
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth * scaleFactor;
+        canvas.height = img.naturalHeight * scaleFactor;
+        const ctx = canvas.getContext('2d');
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        applyUnsharpMask(canvas, 0.6, 2, 10);
+        resultBlob = await new Promise(r => canvas.toBlob(r));
+        const url = URL.createObjectURL(resultBlob);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
+      } else if (currentTab === 'restore') {
+        setStatus('Sending to AI for restoration…');
+        const imageBlob = await imageToBlob(img);
+        const maskCanvas = createWhiteMask(img.naturalWidth, img.naturalHeight);
+        const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
+        const prompt = 'Restore this damaged photo, fix scratches and artifacts, repair faces, smooth skin, natural textures, clean image, high quality, sharp details, realistic';
+        const result = await hfRequest(INPAINTING_MODEL, imageBlob, { maskBlob, prompt });
+        resultBlob = result;
+        const url = URL.createObjectURL(result);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
+      } else if (currentTab === 'colorize') {
+        setStatus('Sending to AI for colorization…');
+        const imageBlob = await imageToBlob(img);
+        const maskCanvas = createWhiteMask(img.naturalWidth, img.naturalHeight);
+        const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
+        const prompt = 'Colorize this black and white photo naturally, realistic accurate colors, natural skin tones, vibrant yet realistic lighting, preserve details, high quality';
+        const result = await hfRequest(INPAINTING_MODEL, imageBlob, { maskBlob, prompt });
         resultBlob = result;
         const url = URL.createObjectURL(result);
         afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
