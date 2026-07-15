@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Enhancement — Epes</title>
-  <meta name="description" content="Enhance image quality: upscale, denoise, restore faces, colorize.">
+  <meta name="description" content="Enhance image quality: upscale, restore faces, colorize, outpainting.">
   <link rel="stylesheet" href="css/style.css">
   <link rel="icon" href="favicon.svg" type="image/svg+xml">
   <link rel="alternate icon" href="favicon.ico" type="image/x-icon">
@@ -35,46 +35,51 @@
 
   <section class="section" style="padding: 1rem 0 3rem;">
     <div class="container">
-      <div class="tool-tabs">
-        <button class="tool-tab active">Upscale</button>
-        <button class="tool-tab">Denoise</button>
-        <button class="tool-tab">Face Restore</button>
-        <button class="tool-tab">Colorize</button>
+      <div class="tool-tabs" id="enhance-tabs">
+        <button class="tool-tab active" data-tab="upscale">Upscale</button>
+        <button class="tool-tab" data-tab="restore">Face Restore</button>
+        <button class="tool-tab" data-tab="colorize">Colorize</button>
+        <button class="tool-tab" data-tab="outpainting">Outpainting</button>
       </div>
 
       <div class="tool-panel">
         <div class="form-group">
           <label>Upload image</label>
-          <div class="upload-zone">
+          <div class="upload-zone" id="enhance-upload-zone">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/></svg>
             <h4>Drop image here or click to browse</h4>
             <p>Supports JPG, PNG, WebP up to 20MB</p>
-            <input type="file" accept="image/*">
+            <input type="file" id="enhance-file-input" accept="image/*">
           </div>
         </div>
 
-        <div class="tool-options" style="margin-bottom: 1rem;">
-          <div class="form-group">
+        <div class="tool-options" id="enhance-options" style="margin-bottom: 1rem;">
+          <div class="form-group" id="option-scale" style="display:none;">
             <label for="upscale-factor">Scale factor</label>
             <select id="upscale-factor">
-              <option>2x (4x resolution)</option>
-              <option selected>4x (16x resolution)</option>
-              <option>8x (64x resolution)</option>
+              <option value="2">2x</option>
+              <option value="4" selected>4x</option>
             </select>
           </div>
+          <div class="form-group" id="option-outpainting" style="display:none;">
+            <label for="outpaint-prompt">Describe the extended area</label>
+            <input type="text" id="outpaint-prompt" placeholder="e.g. extend the background naturally, sky, trees..." value="extend the background naturally">
+          </div>
         </div>
+
+        <div id="enhance-status" style="font-size:0.875rem;color:var(--muted-foreground);margin-bottom:0.75rem;min-height:1.25rem;"></div>
 
         <div class="preview-row">
           <div class="comparison-item">
             <span class="label">Before</span>
-            <div class="placeholder">
+            <div class="placeholder" id="enhance-before">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               <br>Before
             </div>
           </div>
           <div class="comparison-item">
             <span class="label">After</span>
-            <div class="placeholder">
+            <div class="placeholder" id="enhance-after">
               <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
               <br>After
             </div>
@@ -82,8 +87,8 @@
         </div>
 
         <div class="tool-actions">
-          <button class="btn btn-primary btn-lg">Enhance</button>
-          <button class="btn btn-outline" disabled>Download</button>
+          <button class="btn btn-primary btn-lg" id="enhance-btn">Enhance</button>
+          <button class="btn btn-outline" id="enhance-download" disabled>Download</button>
         </div>
       </div>
     </div>
@@ -125,5 +130,7 @@
       <p>&copy; 2026 Epes. All rights reserved.</p>
     </div>
   </footer>
+<script src="js/config.js"></script>
+<script src="js/enhance.js"></script>
 </body>
 </html>

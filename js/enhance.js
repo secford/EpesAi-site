@@ -1,0 +1,232 @@
+const HF_HEADERS = {
+  Authorization: `Bearer ${CONFIG.HF_TOKEN}`,
+};
+
+function sleep(ms) {
+  return new Promise(r => setTimeout(r, ms));
+}
+
+async function hfRequest(model, imageBlob, { maskBlob, prompt } = {}) {
+  const url = `${CONFIG.HF_API_BASE_URL}/${model}`;
+  const maxRetries = 3;
+  const retryDelay = 6000;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    if (maskBlob) {
+      const formData = new FormData();
+      formData.set('image', imageBlob, 'image.png');
+      formData.set('mask', maskBlob, 'mask.png');
+      if (prompt) formData.set('prompt', prompt);
+
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { Authorization: HF_HEADERS.Authorization },
+        body: formData,
+      });
+
+      if (res.ok) return res.blob();
+
+      if (res.status === 503 && attempt < maxRetries) {
+        setStatus('Model is loading — waiting 6s…');
+        await sleep(retryDelay);
+        continue;
+      }
+
+      const errText = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 200) : ''}`);
+    } else {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: {
+          ...HF_HEADERS,
+          'Content-Type': 'image/png',
+        },
+        body: imageBlob,
+      });
+
+      if (res.ok) return res.blob();
+
+      if (res.status === 503 && attempt < maxRetries) {
+        setStatus('Model is loading — waiting 6s…');
+        await sleep(retryDelay);
+        continue;
+      }
+
+      const errText = await res.text().catch(() => '');
+      throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 200) : ''}`);
+    }
+  }
+  throw new Error('Model failed to load after retries');
+}
+
+async function loadImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+function imageToBlob(img, type = 'image/png') {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth;
+  c.height = img.naturalHeight;
+  const ctx = c.getContext('2d');
+  ctx.drawImage(img, 0, 0);
+  return new Promise(r => c.toBlob(r, type));
+}
+
+function expandCanvas(img, expandPx, direction) {
+  const c = document.createElement('canvas');
+  const dw = img.naturalWidth + expandPx * 2;
+  const dh = img.naturalHeight + expandPx * 2;
+  c.width = dw;
+  c.height = dh;
+  const ctx = c.getContext('2d');
+
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, dw, dh);
+  ctx.drawImage(img, expandPx, expandPx);
+
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = dw;
+  maskCanvas.height = dh;
+  const mCtx = maskCanvas.getContext('2d');
+  mCtx.fillStyle = '#000000';
+  mCtx.fillRect(0, 0, dw, dh);
+  mCtx.fillStyle = '#ffffff';
+  mCtx.fillRect(expandPx, expandPx, img.naturalWidth, img.naturalHeight);
+  if (direction === 'left') {
+    mCtx.fillStyle = '#ffffff';
+    mCtx.fillRect(0, 0, expandPx, dh);
+  }
+
+  return { canvas: c, maskCanvas };
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const tabs = document.querySelectorAll('#enhance-tabs .tool-tab');
+  const fileInput = document.getElementById('enhance-file-input');
+  const uploadZone = document.getElementById('enhance-upload-zone');
+  const beforeEl = document.getElementById('enhance-before');
+  const afterEl = document.getElementById('enhance-after');
+  const statusEl = document.getElementById('enhance-status');
+  const enhanceBtn = document.getElementById('enhance-btn');
+  const downloadBtn = document.getElementById('enhance-download');
+  const optionScale = document.getElementById('option-scale');
+  const optionOutpainting = document.getElementById('option-outpainting');
+
+  let currentTab = 'upscale';
+  let currentFile = null;
+  let resultBlob = null;
+
+  function setStatus(msg) {
+    statusEl.textContent = msg;
+  }
+
+  function setLoading(loading) {
+    enhanceBtn.disabled = loading;
+    if (loading) {
+      enhanceBtn.innerHTML = '<span class="spinner"></span> Processing…';
+    } else {
+      enhanceBtn.textContent = 'Enhance';
+    }
+  }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentTab = tab.dataset.tab;
+      optionScale.style.display = currentTab === 'upscale' ? 'block' : 'none';
+      optionOutpainting.style.display = currentTab === 'outpainting' ? 'block' : 'none';
+      afterEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><br>After';
+      downloadBtn.disabled = true;
+      resultBlob = null;
+    });
+  });
+
+  uploadZone.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    currentFile = file;
+    const url = URL.createObjectURL(file);
+    beforeEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+    afterEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><br>After';
+    downloadBtn.disabled = true;
+    resultBlob = null;
+    setStatus('');
+  });
+
+  enhanceBtn.addEventListener('click', async () => {
+    if (!currentFile) {
+      setStatus('Please upload an image first');
+      return;
+    }
+
+    setLoading(true);
+    setStatus('Preparing image…');
+    downloadBtn.disabled = true;
+    resultBlob = null;
+
+    try {
+      const img = await loadImage(currentFile);
+
+      if (currentTab === 'upscale') {
+        setStatus('Sending to Real-ESRGAN…');
+        const blob = await imageToBlob(img);
+        const result = await hfRequest(CONFIG.HF_MODELS.upscale, blob);
+        resultBlob = result;
+        const url = URL.createObjectURL(result);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
+      } else if (currentTab === 'restore') {
+        setStatus('Sending to GFPGAN…');
+        const blob = await imageToBlob(img);
+        const result = await hfRequest(CONFIG.HF_MODELS.restore, blob);
+        resultBlob = result;
+        const url = URL.createObjectURL(result);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
+      } else if (currentTab === 'colorize') {
+        setStatus('Sending to DeOldify…');
+        const blob = await imageToBlob(img);
+        const result = await hfRequest(CONFIG.HF_MODELS.colorize, blob);
+        resultBlob = result;
+        const url = URL.createObjectURL(result);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
+      } else if (currentTab === 'outpainting') {
+        const expandPx = Math.round(Math.min(img.naturalWidth, img.naturalHeight) * 0.3);
+        const prompt = document.getElementById('outpaint-prompt').value.trim() || 'extend the background naturally';
+        setStatus('Expanding canvas and creating mask…');
+        const { canvas, maskCanvas } = expandCanvas(img, expandPx, 'left');
+        const imageBlob = await new Promise(r => canvas.toBlob(r));
+        const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
+        setStatus('Sending to Stable Diffusion inpainting…');
+        const result = await hfRequest(CONFIG.HF_MODELS.outpainting, imageBlob, { maskBlob, prompt });
+        resultBlob = result;
+        const url = URL.createObjectURL(result);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
+      }
+
+      downloadBtn.disabled = false;
+    } catch (err) {
+      setStatus('Error: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  });
+
+  downloadBtn.addEventListener('click', () => {
+    if (!resultBlob) return;
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(resultBlob);
+    a.download = `enhanced-${currentTab}.png`;
+    a.click();
+  });
+});

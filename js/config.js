@@ -21,4 +21,12 @@ const CONFIG = {
   },
   SITE_URL: window.location.origin,
   SITE_NAME: 'Epes',
+  HF_TOKEN: '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',
+  HF_API_BASE_URL: 'https://api-inference.huggingface.co/models',
+  HF_MODELS: {
+    upscale: 'akhaliq/Real-ESRGAN',
+    restore: 'p_v_d_b/GFPGAN',
+    colorize: 'daas/DeOldify',
+    outpainting: 'runwayml/stable-diffusion-v1-5-inpainting',
+  },
 };
