@@ -1,58 +1,4 @@
-if (typeof CONFIG === 'undefined' || !CONFIG.HF_TOKEN) {
-  document.addEventListener('DOMContentLoaded', () => {
-    const statusEl = document.getElementById('enhance-status');
-    if (statusEl) statusEl.textContent = 'Configuration error: HF_TOKEN not found. Try hard refresh (Ctrl+F5).';
-  });
-} else {
-
 let setStatus = (msg) => {};
-
-function sleep(ms) {
-  return new Promise(r => setTimeout(r, ms));
-}
-
-const INPAINTING_MODEL = 'runwayml/stable-diffusion-v1-5-inpainting';
-
-async function hfRequest(model, imageBlob, { maskBlob, prompt } = {}) {
-  const url = `${CONFIG.HF_API_BASE_URL}/${model}?api_key=${CONFIG.HF_TOKEN}`;
-  const maxRetries = 3;
-  const retryDelay = 6000;
-
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const formData = new FormData();
-    formData.set('image', imageBlob, 'image.png');
-    if (maskBlob) formData.set('mask', maskBlob, 'mask.png');
-    if (prompt) formData.set('prompt', prompt);
-
-    let res;
-    try {
-      res = await fetch(url, {
-        method: 'POST',
-        body: formData,
-        redirect: 'error',
-      });
-    } catch (fetchErr) {
-      if (attempt < maxRetries) {
-        setStatus(`Connection issue — retrying (${attempt + 1}/${maxRetries})…`);
-        await sleep(retryDelay);
-        continue;
-      }
-      throw new Error('Cannot reach Hugging Face API. The model may not exist or the server is down.');
-    }
-
-    if (res.ok) return res.blob();
-
-    if (res.status === 503 && attempt < maxRetries) {
-      setStatus('Model is loading — waiting 6s…');
-      await sleep(retryDelay);
-      continue;
-    }
-
-    const errText = await res.text().catch(() => '');
-    throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 200) : ''}`);
-  }
-  throw new Error('Model failed to load after retries');
-}
 
 async function loadImage(file) {
   return new Promise((resolve, reject) => {
@@ -70,55 +16,6 @@ function imageToBlob(img, type = 'image/png') {
   const ctx = c.getContext('2d');
   ctx.drawImage(img, 0, 0);
   return new Promise(r => c.toBlob(r, type));
-}
-
-function imageToBlobScaled(img, scale, type = 'image/png') {
-  const c = document.createElement('canvas');
-  c.width = img.naturalWidth * scale;
-  c.height = img.naturalHeight * scale;
-  const ctx = c.getContext('2d');
-  ctx.imageSmoothingEnabled = true;
-  ctx.imageSmoothingQuality = 'high';
-  ctx.drawImage(img, 0, 0, c.width, c.height);
-  return new Promise(r => c.toBlob(r, type));
-}
-
-function expandCanvas(img, expandPx, direction) {
-  const c = document.createElement('canvas');
-  const dw = img.naturalWidth + expandPx * 2;
-  const dh = img.naturalHeight + expandPx * 2;
-  c.width = dw;
-  c.height = dh;
-  const ctx = c.getContext('2d');
-
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, dw, dh);
-  ctx.drawImage(img, expandPx, expandPx);
-
-  const maskCanvas = document.createElement('canvas');
-  maskCanvas.width = dw;
-  maskCanvas.height = dh;
-  const mCtx = maskCanvas.getContext('2d');
-  mCtx.fillStyle = '#000000';
-  mCtx.fillRect(0, 0, dw, dh);
-  mCtx.fillStyle = '#ffffff';
-  mCtx.fillRect(expandPx, expandPx, img.naturalWidth, img.naturalHeight);
-  if (direction === 'left') {
-    mCtx.fillStyle = '#ffffff';
-    mCtx.fillRect(0, 0, expandPx, dh);
-  }
-
-  return { canvas: c, maskCanvas };
-}
-
-function createWhiteMask(w, h) {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  const ctx = c.getContext('2d');
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(0, 0, w, h);
-  return c;
 }
 
 function applyUnsharpMask(canvas, amount, radius, threshold) {
@@ -170,6 +67,193 @@ function applyUnsharpMask(canvas, amount, radius, threshold) {
     data[i] = Math.max(0, Math.min(255, data[i] + dr * amount));
     data[i + 1] = Math.max(0, Math.min(255, data[i + 1] + dg * amount));
     data[i + 2] = Math.max(0, Math.min(255, data[i + 2] + db * amount));
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyContrastBrightness(canvas, contrast, brightness) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  const factor = (259 * (contrast + 255)) / (255 * (259 - contrast));
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.max(0, Math.min(255, factor * (data[i] - 128) + 128 + brightness));
+    data[i + 1] = Math.max(0, Math.min(255, factor * (data[i + 1] - 128) + 128 + brightness));
+    data[i + 2] = Math.max(0, Math.min(255, factor * (data[i + 2] - 128) + 128 + brightness));
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyMedianFilter(canvas, radius) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  const w = canvas.width;
+  const h = canvas.height;
+  const copy = new Uint8ClampedArray(data);
+  const r = Math.max(1, radius);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const rs = [], gs = [], bs = [];
+      for (let dy = -r; dy <= r; dy++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const px = x + dx;
+          const py = y + dy;
+          if (px < 0 || px >= w || py < 0 || py >= h) continue;
+          const idx = (py * w + px) * 4;
+          rs.push(copy[idx]);
+          gs.push(copy[idx + 1]);
+          bs.push(copy[idx + 2]);
+        }
+      }
+      rs.sort((a, b) => a - b);
+      gs.sort((a, b) => a - b);
+      bs.sort((a, b) => a - b);
+      const mid = Math.floor(rs.length / 2);
+      const idx = (y * w + x) * 4;
+      data[idx] = rs[mid];
+      data[idx + 1] = gs[mid];
+      data[idx + 2] = bs[mid];
+    }
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applySaturation(canvas, amount) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i], g = data[i + 1], b = data[i + 2];
+    const gray = 0.299 * r + 0.587 * g + 0.114 * b;
+    data[i] = Math.max(0, Math.min(255, gray + amount * (r - gray)));
+    data[i + 1] = Math.max(0, Math.min(255, gray + amount * (g - gray)));
+    data[i + 2] = Math.max(0, Math.min(255, gray + amount * (b - gray)));
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function applyColorTint(canvas, tintR, tintG, tintB, strength) {
+  const ctx = canvas.getContext('2d');
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = imageData.data;
+  for (let i = 0; i < data.length; i += 4) {
+    data[i] = Math.max(0, Math.min(255, data[i] * (1 - strength) + tintR * strength));
+    data[i + 1] = Math.max(0, Math.min(255, data[i + 1] * (1 - strength) + tintG * strength));
+    data[i + 2] = Math.max(0, Math.min(255, data[i + 2] * (1 - strength) + tintB * strength));
+  }
+  ctx.putImageData(imageData, 0, 0);
+}
+
+function outpaintingMirror(img, expandPx) {
+  const dw = img.naturalWidth + expandPx * 2;
+  const dh = img.naturalHeight + expandPx * 2;
+  const c = document.createElement('canvas');
+  c.width = dw;
+  c.height = dh;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, expandPx, expandPx);
+
+  const getPixel = (x, y) => {
+    if (x >= expandPx && x < expandPx + img.naturalWidth &&
+        y >= expandPx && y < expandPx + img.naturalHeight) return null;
+    let sx = x - expandPx, sy = y - expandPx;
+    if (sx < 0) sx = Math.min(-sx, img.naturalWidth - 1);
+    else if (sx >= img.naturalWidth) sx = Math.max(2 * img.naturalWidth - sx - 2, 0);
+    if (sy < 0) sy = Math.min(-sy, img.naturalHeight - 1);
+    else if (sy >= img.naturalHeight) sy = Math.max(2 * img.naturalHeight - sy - 2, 0);
+    return { x: expandPx + sx, y: expandPx + sy };
+  };
+
+  const temp = document.createElement('canvas');
+  temp.width = img.naturalWidth;
+  temp.height = img.naturalHeight;
+  const tCtx = temp.getContext('2d');
+  tCtx.drawImage(img, 0, 0);
+  const srcData = tCtx.getImageData(0, 0, img.naturalWidth, img.naturalHeight);
+  const outData = ctx.getImageData(0, 0, dw, dh);
+
+  for (let y = 0; y < dh; y++) {
+    for (let x = 0; x < dw; x++) {
+      if (x >= expandPx && x < expandPx + img.naturalWidth &&
+          y >= expandPx && y < expandPx + img.naturalHeight) continue;
+      const p = getPixel(x, y);
+      if (!p) continue;
+      const si = ((p.y - expandPx) * img.naturalWidth + (p.x - expandPx)) * 4;
+      const oi = (y * dw + x) * 4;
+      const dx = Math.min(Math.abs(x - expandPx), Math.abs(x - (expandPx + img.naturalWidth - 1)));
+      const dy = Math.min(Math.abs(y - expandPx), Math.abs(y - (expandPx + img.naturalHeight - 1)));
+      const dist = Math.max(dx, dy);
+      const maxDist = Math.max(expandPx, img.naturalWidth);
+      const blur = Math.max(1, (dist / maxDist) * 10);
+      outData[oi] = srcData[si];
+      outData[oi + 1] = srcData[si + 1];
+      outData[oi + 2] = srcData[si + 2];
+      outData[oi + 3] = 255;
+    }
+  }
+  ctx.putImageData(outData, 0, 0);
+
+  applyGaussianBlurCanvas(c, expandPx * 0.15);
+
+  ctx.drawImage(img, expandPx, expandPx);
+
+  return c;
+}
+
+function applyGaussianBlurCanvas(canvas, sigma) {
+  const ctx = canvas.getContext('2d');
+  const w = canvas.width, h = canvas.height;
+  const imageData = ctx.getImageData(0, 0, w, h);
+  const data = imageData.data;
+  const copy = new Uint8ClampedArray(data);
+  const r = Math.max(1, Math.round(sigma * 2));
+  const kSize = r * 2 + 1;
+  const kernel = new Float32Array(kSize);
+  let sum = 0;
+  for (let i = -r; i <= r; i++) {
+    const v = Math.exp(-(i * i) / (2 * sigma * sigma));
+    kernel[i + r] = v;
+    sum += v;
+  }
+  for (let i = 0; i < kSize; i++) kernel[i] /= sum;
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let rAcc = 0, gAcc = 0, bAcc = 0;
+      for (let kx = 0; kx < kSize; kx++) {
+        const px = x + kx - r;
+        if (px < 0 || px >= w) continue;
+        const idx = (y * w + px) * 4;
+        rAcc += copy[idx] * kernel[kx];
+        gAcc += copy[idx + 1] * kernel[kx];
+        bAcc += copy[idx + 2] * kernel[kx];
+      }
+      const idx = (y * w + x) * 4;
+      data[idx] = rAcc;
+      data[idx + 1] = gAcc;
+      data[idx + 2] = bAcc;
+    }
+  }
+  const copy2 = new Uint8ClampedArray(data);
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      let rAcc = 0, gAcc = 0, bAcc = 0;
+      for (let ky = 0; ky < kSize; ky++) {
+        const py = y + ky - r;
+        if (py < 0 || py >= h) continue;
+        const idx = (py * w + x) * 4;
+        rAcc += copy2[idx] * kernel[ky];
+        gAcc += copy2[idx + 1] * kernel[ky];
+        bAcc += copy2[idx + 2] * kernel[ky];
+      }
+      const idx = (y * w + x) * 4;
+      data[idx] = rAcc;
+      data[idx + 1] = gAcc;
+      data[idx + 2] = bAcc;
+    }
   }
   ctx.putImageData(imageData, 0, 0);
 }
@@ -237,27 +321,14 @@ document.addEventListener('DOMContentLoaded', () => {
     }
 
     setLoading(true);
-    setStatus('Preparing image…');
+    setStatus('Processing…');
     downloadBtn.disabled = true;
     resultBlob = null;
 
     try {
       const img = await loadImage(currentFile);
 
-      if (currentTab === 'outpainting') {
-        const expandPx = Math.round(Math.min(img.naturalWidth, img.naturalHeight) * 0.3);
-        const prompt = document.getElementById('outpaint-prompt').value.trim() || 'extend the background naturally';
-        setStatus('Expanding canvas and creating mask…');
-        const { canvas, maskCanvas } = expandCanvas(img, expandPx, 'left');
-        const imageBlob = await new Promise(r => canvas.toBlob(r));
-        const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
-        setStatus('Sending to Stable Diffusion inpainting…');
-        const result = await hfRequest(INPAINTING_MODEL, imageBlob, { maskBlob, prompt });
-        resultBlob = result;
-        const url = URL.createObjectURL(result);
-        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-        setStatus('Done');
-      } else if (currentTab === 'upscale') {
+      if (currentTab === 'upscale') {
         const scaleFactor = parseInt(document.getElementById('upscale-factor').value, 10) || 4;
         setStatus(`Upscaling ${scaleFactor}x…`);
         const canvas = document.createElement('canvas');
@@ -269,34 +340,41 @@ document.addEventListener('DOMContentLoaded', () => {
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         applyUnsharpMask(canvas, 0.6, 2, 10);
         resultBlob = await new Promise(r => canvas.toBlob(r));
+      } else if (currentTab === 'restore') {
+        setStatus('Applying restoration filters…');
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        applyMedianFilter(canvas, 1);
+        applyContrastBrightness(canvas, 20, 5);
+        applyUnsharpMask(canvas, 0.8, 1.5, 8);
+        resultBlob = await new Promise(r => canvas.toBlob(r));
+      } else if (currentTab === 'colorize') {
+        setStatus('Applying color tint…');
+        const canvas = document.createElement('canvas');
+        canvas.width = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        applySaturation(canvas, 1.3);
+        applyColorTint(canvas, 230, 200, 180, 0.12);
+        applyContrastBrightness(canvas, 15, 0);
+        resultBlob = await new Promise(r => canvas.toBlob(r));
+      } else if (currentTab === 'outpainting') {
+        const expandPx = Math.round(Math.min(img.naturalWidth, img.naturalHeight) * 0.3);
+        setStatus(`Expanding canvas by ${expandPx}px (mirror+blur)…`);
+        const canvas = outpaintingMirror(img, expandPx);
+        resultBlob = await new Promise(r => canvas.toBlob(r));
+      }
+
+      if (resultBlob) {
         const url = URL.createObjectURL(resultBlob);
         afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
         setStatus('Done');
-      } else if (currentTab === 'restore') {
-        setStatus('Sending to AI for restoration…');
-        const imageBlob = await imageToBlob(img);
-        const maskCanvas = createWhiteMask(img.naturalWidth, img.naturalHeight);
-        const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
-        const prompt = 'Restore this damaged photo, fix scratches and artifacts, repair faces, smooth skin, natural textures, clean image, high quality, sharp details, realistic';
-        const result = await hfRequest(INPAINTING_MODEL, imageBlob, { maskBlob, prompt });
-        resultBlob = result;
-        const url = URL.createObjectURL(result);
-        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-        setStatus('Done');
-      } else if (currentTab === 'colorize') {
-        setStatus('Sending to AI for colorization…');
-        const imageBlob = await imageToBlob(img);
-        const maskCanvas = createWhiteMask(img.naturalWidth, img.naturalHeight);
-        const maskBlob = await new Promise(r => maskCanvas.toBlob(r));
-        const prompt = 'Colorize this black and white photo naturally, realistic accurate colors, natural skin tones, vibrant yet realistic lighting, preserve details, high quality';
-        const result = await hfRequest(INPAINTING_MODEL, imageBlob, { maskBlob, prompt });
-        resultBlob = result;
-        const url = URL.createObjectURL(result);
-        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-        setStatus('Done');
+        downloadBtn.disabled = false;
       }
-
-      downloadBtn.disabled = false;
     } catch (err) {
       console.error(err);
       setStatus('Error: ' + err.message);
@@ -313,4 +391,3 @@ document.addEventListener('DOMContentLoaded', () => {
     a.click();
   });
 });
-}
