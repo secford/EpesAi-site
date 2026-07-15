@@ -47,23 +47,10 @@
       </div>
 
       <div class="chat-interface">
-        <div class="chat-messages">
-          <div class="chat-message bot">
-            <div class="avatar">A</div>
-            <div class="bubble">Hello! How can I help you today?</div>
-          </div>
-          <div class="chat-message user">
-            <div class="avatar">You</div>
-            <div class="bubble">Write a short poem about nature.</div>
-          </div>
-          <div class="chat-message bot">
-            <div class="avatar">A</div>
-            <div class="bubble">Golden leaves in autumn light,<br>Whispering winds take flight.<br>Mountains tall and oceans deep,<br>Secrets that the forests keep.</div>
-          </div>
-        </div>
+        <div class="chat-messages"></div>
         <div class="chat-input-area">
           <input type="text" placeholder="Type your message..." id="chat-input">
-          <button class="btn btn-primary">Send</button>
+          <button class="btn btn-primary" id="send-btn">Send</button>
         </div>
       </div>
     </div>
@@ -105,5 +92,7 @@
       <p>&copy; 2026 Epes. All rights reserved.</p>
     </div>
   </footer>
+<script src="js/config.js"></script>
+<script src="js/agent.js"></script>
 </body>
 </html>

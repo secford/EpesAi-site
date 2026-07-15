@@ -11,4 +11,14 @@ const CONFIG = {
     'WaifuStudio — Waifu Art': { model: 'flux', style: 'anime waifu style, cute character, detailed anime art' },
     'VelvetRender — Artistic': { model: 'flux', style: 'digital painting, velvet texture, artistic, smooth gradients, soft lighting' },
   },
+  OPENROUTER_API_BASE_URL: 'https://openrouter.ai/api/v1',
+  OPENROUTER_API_KEY: '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',
+  CHAT_MODELS: {
+    'Standard': 'openai/gpt-4o-mini',
+    'Advanced': 'openai/gpt-4o',
+    'Reasoning': 'deepseek/deepseek-r1',
+    'Vision': 'openai/gpt-4o',
+  },
+  SITE_URL: window.location.origin,
+  SITE_NAME: 'Epes',
 };
