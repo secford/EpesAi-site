@@ -5,32 +5,36 @@ if (typeof CONFIG === 'undefined' || !CONFIG.HF_TOKEN) {
   });
 } else {
 
-const HF_HEADERS = {
-  Authorization: `Bearer ${CONFIG.HF_TOKEN}`,
-};
-
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
 
 async function hfRequest(model, imageBlob, { maskBlob, prompt } = {}) {
-  const url = `${CONFIG.HF_API_BASE_URL}/${model}`;
+  const url = `${CONFIG.HF_API_BASE_URL}/${model}?api_key=${CONFIG.HF_TOKEN}`;
   const maxRetries = 3;
   const retryDelay = 6000;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
     const formData = new FormData();
     formData.set('image', imageBlob, 'image.png');
-    if (maskBlob) {
-      formData.set('mask', maskBlob, 'mask.png');
-    }
+    if (maskBlob) formData.set('mask', maskBlob, 'mask.png');
     if (prompt) formData.set('prompt', prompt);
 
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { Authorization: HF_HEADERS.Authorization },
-      body: formData,
-    });
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'POST',
+        body: formData,
+        redirect: 'error',
+      });
+    } catch (fetchErr) {
+      if (attempt < maxRetries) {
+        setStatus(`Connection issue — retrying (${attempt + 1}/${maxRetries})…`);
+        await sleep(retryDelay);
+        continue;
+      }
+      throw new Error('Cannot reach Hugging Face API. The model may not exist or the server is down.');
+    }
 
     if (res.ok) return res.blob();
 
