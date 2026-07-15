@@ -31,24 +31,30 @@ document.addEventListener('DOMContentLoaded', () => {
     setStatus('');
   });
 
+  let removeBackground = null;
+
+  async function loadLib() {
+    if (removeBackground) return;
+    setStatus('Loading background removal library…');
+    const mod = await import('https://cdn.jsdelivr.net/npm/@imgly/background-removal@1.7.0/+esm');
+    removeBackground = mod.removeBackground || mod.default;
+  }
+
   processBtn.addEventListener('click', async () => {
     if (!currentFile) {
       setStatus('Please upload an image first');
       return;
     }
 
-    if (!window.imglyBackgroundRemoval) {
-      setStatus('Background removal library is still loading. Please wait a moment and try again.');
-      return;
-    }
-
     setLoading(true);
-    setStatus('Removing background…');
+    setStatus('Initializing…');
     downloadBtn.disabled = true;
     resultBlob = null;
 
     try {
-      const blob = await window.imglyBackgroundRemoval.removeBackground(currentFile);
+      await loadLib();
+      setStatus('Removing background…');
+      const blob = await removeBackground(currentFile);
       resultBlob = blob;
       const url = URL.createObjectURL(blob);
       afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;

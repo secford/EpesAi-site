@@ -1,3 +1,10 @@
+if (typeof CONFIG === 'undefined' || !CONFIG.HF_TOKEN) {
+  document.addEventListener('DOMContentLoaded', () => {
+    const statusEl = document.getElementById('enhance-status');
+    if (statusEl) statusEl.textContent = 'Configuration error: HF_TOKEN not found. Try hard refresh (Ctrl+F5).';
+  });
+} else {
+
 const HF_HEADERS = {
   Authorization: `Bearer ${CONFIG.HF_TOKEN}`,
 };
@@ -167,6 +174,11 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
+    if (!CONFIG.HF_MODELS) {
+      setStatus('Configuration error: HF models not found. Try hard refresh (Ctrl+F5).');
+      return;
+    }
+
     setLoading(true);
     setStatus('Preparing image…');
     downloadBtn.disabled = true;
@@ -230,3 +242,4 @@ document.addEventListener('DOMContentLoaded', () => {
     a.click();
   });
 });
+}
