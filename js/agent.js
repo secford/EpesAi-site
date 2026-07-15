@@ -18,7 +18,11 @@ document.addEventListener('DOMContentLoaded', () => {
     avatar.textContent = sender === 'bot' ? 'A' : 'You';
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
-    bubble.textContent = text;
+    if (sender === 'bot' && window.marked) {
+      bubble.innerHTML = marked.parse(text);
+    } else {
+      bubble.textContent = text;
+    }
     div.appendChild(avatar);
     div.appendChild(bubble);
     chatMessages.appendChild(div);
@@ -52,7 +56,7 @@ document.addEventListener('DOMContentLoaded', () => {
     chatMessages.scrollTop = chatMessages.scrollHeight;
     sendBtn.disabled = true;
 
-    const messages = [{ role: 'system', content: 'You are a helpful AI assistant named Epes. Respond concisely and accurately.' }];
+    const messages = [{ role: 'system', content: 'You are a helpful AI assistant named Epes. Respond concisely and accurately. Format your answers in markdown when appropriate — use code blocks, lists, tables, **bold**, etc.' }];
     chatMessages.querySelectorAll('.chat-message:not(#loading-message)').forEach(msg => {
       const role = msg.classList.contains('user') ? 'user' : 'assistant';
       const bubble = msg.querySelector('.bubble');
