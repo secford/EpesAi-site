@@ -5,6 +5,8 @@ if (typeof CONFIG === 'undefined' || !CONFIG.HF_TOKEN) {
   });
 } else {
 
+let setStatus = (msg) => {};
+
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
@@ -112,9 +114,7 @@ document.addEventListener('DOMContentLoaded', () => {
   let currentFile = null;
   let resultBlob = null;
 
-  function setStatus(msg) {
-    statusEl.textContent = msg;
-  }
+  setStatus = (msg) => { statusEl.textContent = msg; };
 
   function setLoading(loading) {
     enhanceBtn.disabled = loading;
