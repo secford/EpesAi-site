@@ -1,4 +1,5 @@
 document.addEventListener('DOMContentLoaded', () => {
+  const tabs = document.querySelectorAll('#editor-tabs .tool-tab');
   const fileInput = document.getElementById('editor-file-input');
   const uploadZone = document.getElementById('editor-upload-zone');
   const beforeEl = document.getElementById('editor-before');
@@ -7,8 +8,11 @@ document.addEventListener('DOMContentLoaded', () => {
   const processBtn = document.getElementById('editor-btn');
   const downloadBtn = document.getElementById('editor-download');
 
+  let currentTab = 'remove-bg';
   let currentFile = null;
   let resultBlob = null;
+
+  const IMPLEMENTED = { 'remove-bg': true };
 
   function setStatus(msg) { statusEl.textContent = msg; }
 
@@ -16,6 +20,25 @@ document.addEventListener('DOMContentLoaded', () => {
     processBtn.disabled = loading;
     processBtn.textContent = loading ? 'Processing…' : 'Remove Background';
   }
+
+  tabs.forEach(tab => {
+    tab.addEventListener('click', () => {
+      tabs.forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      currentTab = tab.dataset.tab;
+      afterEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><br>Result will appear here';
+      downloadBtn.disabled = true;
+      resultBlob = null;
+      if (IMPLEMENTED[currentTab]) {
+        processBtn.textContent = 'Remove Background';
+        processBtn.disabled = false;
+        setStatus('');
+      } else {
+        processBtn.disabled = true;
+        setStatus('Coming soon');
+      }
+    });
+  });
 
   uploadZone.addEventListener('click', () => fileInput.click());
 

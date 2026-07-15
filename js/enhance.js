@@ -19,49 +19,29 @@ async function hfRequest(model, imageBlob, { maskBlob, prompt } = {}) {
   const retryDelay = 6000;
 
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const formData = new FormData();
+    formData.set('image', imageBlob, 'image.png');
     if (maskBlob) {
-      const formData = new FormData();
-      formData.set('image', imageBlob, 'image.png');
       formData.set('mask', maskBlob, 'mask.png');
-      if (prompt) formData.set('prompt', prompt);
-
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: { Authorization: HF_HEADERS.Authorization },
-        body: formData,
-      });
-
-      if (res.ok) return res.blob();
-
-      if (res.status === 503 && attempt < maxRetries) {
-        setStatus('Model is loading — waiting 6s…');
-        await sleep(retryDelay);
-        continue;
-      }
-
-      const errText = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 200) : ''}`);
-    } else {
-      const res = await fetch(url, {
-        method: 'POST',
-        headers: {
-          ...HF_HEADERS,
-          'Content-Type': 'image/png',
-        },
-        body: imageBlob,
-      });
-
-      if (res.ok) return res.blob();
-
-      if (res.status === 503 && attempt < maxRetries) {
-        setStatus('Model is loading — waiting 6s…');
-        await sleep(retryDelay);
-        continue;
-      }
-
-      const errText = await res.text().catch(() => '');
-      throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 200) : ''}`);
     }
+    if (prompt) formData.set('prompt', prompt);
+
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { Authorization: HF_HEADERS.Authorization },
+      body: formData,
+    });
+
+    if (res.ok) return res.blob();
+
+    if (res.status === 503 && attempt < maxRetries) {
+      setStatus('Model is loading — waiting 6s…');
+      await sleep(retryDelay);
+      continue;
+    }
+
+    const errText = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}${errText ? ': ' + errText.slice(0, 200) : ''}`);
   }
   throw new Error('Model failed to load after retries');
 }
