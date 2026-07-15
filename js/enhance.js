@@ -7,6 +7,19 @@ if (typeof CONFIG === 'undefined' || !CONFIG.HF_TOKEN) {
 
 let setStatus = (msg) => {};
 
+let hfInit = null;
+async function getHF() {
+  if (!hfInit) {
+    hfInit = import('https://cdn.jsdelivr.net/npm/@huggingface/inference@2/+esm')
+      .then(({ HfInference }) => new HfInference(CONFIG.HF_TOKEN))
+      .catch(err => {
+        hfInit = null;
+        throw new Error('Failed to load Hugging Face library: ' + err.message);
+      });
+  }
+  return hfInit;
+}
+
 function sleep(ms) {
   return new Promise(r => setTimeout(r, ms));
 }
@@ -70,6 +83,17 @@ function imageToBlob(img, type = 'image/png') {
   return new Promise(r => c.toBlob(r, type));
 }
 
+function imageToBlobScaled(img, scale, type = 'image/png') {
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth * scale;
+  c.height = img.naturalHeight * scale;
+  const ctx = c.getContext('2d');
+  ctx.imageSmoothingEnabled = true;
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(img, 0, 0, c.width, c.height);
+  return new Promise(r => c.toBlob(r, type));
+}
+
 function expandCanvas(img, expandPx, direction) {
   const c = document.createElement('canvas');
   const dw = img.naturalWidth + expandPx * 2;
@@ -98,6 +122,12 @@ function expandCanvas(img, expandPx, direction) {
   return { canvas: c, maskCanvas };
 }
 
+const PROMPTS = {
+  upscale: 'Upscale this image 4x, enhance details, denoise, remove compression artifacts, photorealism, sharp edges, 8K quality, smooth natural textures, high resolution, crisp, no blur',
+  restore: 'Restore this damaged photo, fix faces, remove scratches and dust, clean image, natural skin texture, enhance eyes and mouth, smooth skin, realistic facial features, remove artifacts',
+  colorize: 'Colorize this black and white photo naturally, accurate realistic colors, natural skin tones, vibrant yet realistic, preserve original details and lighting, smooth color transitions',
+};
+
 document.addEventListener('DOMContentLoaded', () => {
   const tabs = document.querySelectorAll('#enhance-tabs .tool-tab');
   const fileInput = document.getElementById('enhance-file-input');
@@ -125,6 +155,8 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   }
 
+  const placeholderSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><br>After';
+
   tabs.forEach(tab => {
     tab.addEventListener('click', () => {
       tabs.forEach(t => t.classList.remove('active'));
@@ -132,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
       currentTab = tab.dataset.tab;
       optionScale.style.display = currentTab === 'upscale' ? 'block' : 'none';
       optionOutpainting.style.display = currentTab === 'outpainting' ? 'block' : 'none';
-      afterEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><br>After';
+      afterEl.innerHTML = placeholderSvg;
       downloadBtn.disabled = true;
       resultBlob = null;
     });
@@ -146,7 +178,7 @@ document.addEventListener('DOMContentLoaded', () => {
     currentFile = file;
     const url = URL.createObjectURL(file);
     beforeEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-    afterEl.innerHTML = '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg><br>After';
+    afterEl.innerHTML = placeholderSvg;
     downloadBtn.disabled = true;
     resultBlob = null;
     setStatus('');
@@ -158,11 +190,6 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
 
-    if (!CONFIG.HF_MODELS) {
-      setStatus('Configuration error: HF models not found. Try hard refresh (Ctrl+F5).');
-      return;
-    }
-
     setLoading(true);
     setStatus('Preparing image…');
     downloadBtn.disabled = true;
@@ -171,31 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       const img = await loadImage(currentFile);
 
-      if (currentTab === 'upscale') {
-        setStatus('Sending to Real-ESRGAN…');
-        const blob = await imageToBlob(img);
-        const result = await hfRequest(CONFIG.HF_MODELS.upscale, blob);
-        resultBlob = result;
-        const url = URL.createObjectURL(result);
-        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-        setStatus('Done');
-      } else if (currentTab === 'restore') {
-        setStatus('Sending to GFPGAN…');
-        const blob = await imageToBlob(img);
-        const result = await hfRequest(CONFIG.HF_MODELS.restore, blob);
-        resultBlob = result;
-        const url = URL.createObjectURL(result);
-        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-        setStatus('Done');
-      } else if (currentTab === 'colorize') {
-        setStatus('Sending to DeOldify…');
-        const blob = await imageToBlob(img);
-        const result = await hfRequest(CONFIG.HF_MODELS.colorize, blob);
-        resultBlob = result;
-        const url = URL.createObjectURL(result);
-        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
-        setStatus('Done');
-      } else if (currentTab === 'outpainting') {
+      if (currentTab === 'outpainting') {
         const expandPx = Math.round(Math.min(img.naturalWidth, img.naturalHeight) * 0.3);
         const prompt = document.getElementById('outpaint-prompt').value.trim() || 'extend the background naturally';
         setStatus('Expanding canvas and creating mask…');
@@ -208,10 +211,38 @@ document.addEventListener('DOMContentLoaded', () => {
         const url = URL.createObjectURL(result);
         afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
         setStatus('Done');
+      } else {
+        setStatus('Loading AI library…');
+        const hf = await getHF();
+
+        let imageBlob;
+        if (currentTab === 'upscale') {
+          const scaleFactor = parseInt(document.getElementById('upscale-factor').value, 10) || 4;
+          setStatus(`Upscaling ${scaleFactor}x and enhancing…`);
+          imageBlob = await imageToBlobScaled(img, scaleFactor);
+        } else {
+          imageBlob = await imageToBlob(img);
+        }
+
+        const prompt = PROMPTS[currentTab];
+        setStatus(`Sending to FLUX AI (${currentTab})…`);
+
+        const result = await hf.imageToImage({
+          model: 'black-forest-labs/FLUX.1-Kontext-dev',
+          inputs: imageBlob,
+          parameters: { prompt },
+          waitForModel: true,
+        });
+
+        resultBlob = result;
+        const url = URL.createObjectURL(result);
+        afterEl.innerHTML = `<img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain;">`;
+        setStatus('Done');
       }
 
       downloadBtn.disabled = false;
     } catch (err) {
+      console.error(err);
       setStatus('Error: ' + err.message);
     } finally {
       setLoading(false);
